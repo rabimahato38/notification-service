@@ -1,0 +1,357 @@
+{
+	"info": {
+		"_postman_id": "e-khazna-whatsapp-gateway-collection-id",
+		"name": "E-Khazna WhatsApp Gateway",
+		"description": "Postman Collection for E-Khazna Centralized WhatsApp API Gateway & Service Registry",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"variable": [
+		{
+			"key": "gateway_url",
+			"value": "http://localhost:8000",
+			"type": "string"
+		},
+		{
+			"key": "gateway_api_key",
+			"value": "wsg_live_YOUR_WHATSAPP_GATEWAY_API_KEY",
+			"type": "string"
+		},
+		{
+			"key": "service_id",
+			"value": "SRV-8F92A1B0",
+			"type": "string"
+		},
+		{
+			"key": "service_name",
+			"value": "E-Khazna",
+			"type": "string"
+		},
+		{
+			"key": "recipient",
+			"value": "7620476512",
+			"type": "string"
+		},
+		{
+			"key": "dynamic_value_1",
+			"value": "sakib",
+			"type": "string"
+		},
+		{
+			"key": "dynamic_value_2",
+			"value": "Payment",
+			"type": "string"
+		}
+	],
+	"item": [
+		{
+			"name": "Health Check",
+			"request": {
+				"method": "GET",
+				"header": [
+					{
+						"key": "Accept",
+						"value": "application/json"
+					}
+				],
+				"url": {
+					"raw": "{{gateway_url}}/api/health",
+					"host": [
+						"{{gateway_url}}"
+					],
+					"path": [
+						"api",
+						"health"
+					]
+				},
+				"description": "Check Gateway service health status (No authentication required)"
+			},
+			"response": []
+		},
+		{
+			"name": "Service Management",
+			"item": [
+				{
+					"name": "Create Service Configuration",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"service_name\": \"E-Khazna\",\n    \"allowed_templates\": [\n        \"e_khazana_welcome\",\n        \"e_khazana_2\",\n        \"e_khazana_3\"\n    ],\n    \"description\": \"Primary E-Khazna application portal\"\n}"
+						},
+						"url": {
+							"raw": "{{gateway_url}}/api/v1/services",
+							"host": [
+								"{{gateway_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"services"
+							]
+						},
+						"description": "Create a service configuration with optional allowed_templates list. Automatically creates service_id and WHATSAPP_GATEWAY_API_KEY."
+					},
+					"response": []
+				},
+				{
+					"name": "List All Services",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{gateway_url}}/api/v1/services",
+							"host": [
+								"{{gateway_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"services"
+							]
+						},
+						"description": "List all configured services."
+					},
+					"response": []
+				},
+				{
+					"name": "Get Service Details",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{gateway_url}}/api/v1/services/{{service_id}}",
+							"host": [
+								"{{gateway_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"services",
+								"{{service_id}}"
+							]
+						},
+						"description": "Get configuration details for a single service by service_id."
+					},
+					"response": []
+				},
+				{
+					"name": "Update Allowed Templates",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"allowed_templates\": [\n        \"e_khazana_welcome\",\n        \"e_khazana_2\",\n        \"e_khazana_3\"\n    ]\n}"
+						},
+						"url": {
+							"raw": "{{gateway_url}}/api/v1/services/{{service_id}}/templates",
+							"host": [
+								"{{gateway_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"services",
+								"{{service_id}}",
+								"templates"
+							]
+						},
+						"description": "Update configured allowed templates for a specific service."
+					},
+					"response": []
+				},
+				{
+					"name": "Regenerate Service API Key",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{gateway_url}}/api/v1/services/{{service_id}}/regenerate-key",
+							"host": [
+								"{{gateway_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"services",
+								"{{service_id}}",
+								"regenerate-key"
+							]
+						},
+						"description": "Regenerate the WHATSAPP_GATEWAY_API_KEY for a specific service."
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "WhatsApp Messaging",
+			"item": [
+				{
+					"name": "Send Template - No Parameters",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{gateway_api_key}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"service_id\": \"{{service_id}}\",\n    \"to\": \"{{recipient}}\",\n    \"template\": \"e_khazana_welcome\",\n    \"language\": \"en\",\n    \"parameters\": []\n}"
+						},
+						"url": {
+							"raw": "{{gateway_url}}/api/v1/whatsapp/send-template",
+							"host": [
+								"{{gateway_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"whatsapp",
+								"send-template"
+							]
+						},
+						"description": "Send a WhatsApp template message with zero parameters using service_id and gateway API key."
+					},
+					"response": []
+				},
+				{
+					"name": "Send Template - One Parameter",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{gateway_api_key}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"service_id\": \"{{service_id}}\",\n    \"to\": \"{{recipient}}\",\n    \"template\": \"e_khazana_2\",\n    \"language\": \"en\",\n    \"parameters\": [\n        \"{{dynamic_value_1}}\"\n    ]\n}"
+						},
+						"url": {
+							"raw": "{{gateway_url}}/api/v1/whatsapp/send-template",
+							"host": [
+								"{{gateway_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"whatsapp",
+								"send-template"
+							]
+						},
+						"description": "Send a WhatsApp template message with one dynamic body parameter."
+					},
+					"response": []
+				},
+				{
+					"name": "Send Template - Two Parameters",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{gateway_api_key}}",
+								"type": "text"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"service_id\": \"{{service_id}}\",\n    \"to\": \"{{recipient}}\",\n    \"template\": \"e_khazana_3\",\n    \"language\": \"en\",\n    \"parameters\": [\n        \"{{dynamic_value_1}}\",\n        \"{{dynamic_value_2}}\"\n    ]\n}"
+						},
+						"url": {
+							"raw": "{{gateway_url}}/api/v1/whatsapp/send-template",
+							"host": [
+								"{{gateway_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"whatsapp",
+								"send-template"
+							]
+						},
+						"description": "Send a WhatsApp template message with two dynamic body parameters."
+					},
+					"response": []
+				}
+			]
+		}
+	]
+}
