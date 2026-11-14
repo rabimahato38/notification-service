@@ -3,13 +3,21 @@ stages:
   - validate
   - test
   - build
+  - deploy
 
 variables:
   GIT_DEPTH: "20"
+  # One tag per commit: the same tag is built, pushed, deployed and rolled back to
+  APP_IMAGE: $CI_REGISTRY_IMAGE/app:$CI_COMMIT_SHORT_SHA
+  WEB_IMAGE: $CI_REGISTRY_IMAGE/web:$CI_COMMIT_SHORT_SHA
 
 default:
   tags:
     - docker
+
+# CI_REGISTRY_* are short-lived credentials GitLab creates for each job
+.registry_login: &registry_login
+  - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
 
 validate:
   stage: validate
@@ -42,16 +50,44 @@ build:
   stage: build
   image: docker:29-cli
   script:
-    # CI_REGISTRY_* are short-lived credentials GitLab creates for this job only
-    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
-    - docker build --pull -t "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA" .
-    - docker push "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
+    - *registry_login
+    - docker build --pull --target app -t "$APP_IMAGE" .
+    - docker build --target web -t "$WEB_IMAGE" .
+    - docker push "$APP_IMAGE"
+    - docker push "$WEB_IMAGE"
     - |
       if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
-        docker tag "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA" "$CI_REGISTRY_IMAGE:latest"
-        docker push "$CI_REGISTRY_IMAGE:latest"
+        for name in app web; do
+          docker tag "$CI_REGISTRY_IMAGE/$name:$CI_COMMIT_SHORT_SHA" "$CI_REGISTRY_IMAGE/$name:latest"
+          docker push "$CI_REGISTRY_IMAGE/$name:latest"
+        done
       fi
   after_script:
     - docker logout "$CI_REGISTRY"
 
-# deploy_test (Compose on w2) returns in Phase 3.
+# Compose deployment on w2. Rollback: GitLab > Operate > Environments > test > re-deploy an older entry.
+deploy_test:
+  stage: deploy
+  image: docker:29-cli
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+  environment:
+    name: test
+    url: http://172.31.34.196:8081
+  resource_group: test        # never two deployments at the same time
+  variables:
+    COMPOSE_PROJECT_NAME: notification-service
+    BIND_ADDR: 172.31.34.196  # private IP only
+  script:
+    # TEST_* are masked, protected variables scoped to the "test" environment
+    - export APP_KEY="$TEST_APP_KEY" DB_PASSWORD="$TEST_DB_PASSWORD"
+    - *registry_login
+    - docker compose pull app nginx
+    - docker compose up -d --no-build --remove-orphans --wait --wait-timeout 180
+    - docker compose exec -T app php artisan migrate --force
+    - wget -q -O - "http://$BIND_ADDR:8081/api/health"
+    - docker compose ps
+  after_script:
+    - export APP_KEY=unused DB_PASSWORD=unused
+    - if [ "$CI_JOB_STATUS" != "success" ]; then docker compose ps -a; docker compose logs --tail 40; fi
+    - docker logout "$CI_REGISTRY"
