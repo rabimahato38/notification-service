@@ -34,6 +34,8 @@ test:
       - vendor/
   script:
     - composer install --no-interaction --prefer-dist --no-progress
+    # Laravel expects a .env file; job variables above still win over its values
+    - cp .env.example .env
     - php artisan test
 
 build:
