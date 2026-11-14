@@ -1,59 +1,55 @@
+# Runs on the project runner on w2 (Docker executor): every job is a throwaway container.
 stages:
   - validate
   - test
   - build
-  - deploy_test
 
 variables:
   GIT_DEPTH: "20"
 
-# This project uses a project-scoped shell runner on the GitLab VM. The second
-# tag keeps these jobs off the existing Docker-executor runner.
 default:
   tags:
-    - dev
-    - notification-shell
+    - docker
 
 validate:
   stage: validate
+  image: composer:2
   script:
-    - docker run --rm -v "$CI_PROJECT_DIR:/app" -w /app composer:2 composer validate --no-check-publish
+    - composer validate --no-check-publish
 
 test:
   stage: test
+  image: composer:2
+  variables:
+    APP_ENV: testing
+    # throwaway key for tests only, never used by a deployment
+    APP_KEY: "base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+    DB_CONNECTION: sqlite
+    DB_DATABASE: ":memory:"
+  cache:
+    key:
+      files:
+        - composer.lock
+    paths:
+      - vendor/
   script:
-    - >-
-      docker run --rm --user "$(id -u):$(id -g)"
-      -e APP_ENV=testing
-      -e APP_KEY=base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
-      -e DB_CONNECTION=sqlite
-      -e DB_DATABASE=:memory:
-      -v "$CI_PROJECT_DIR:/app"
-      -w /app
-      composer:2
-      sh -lc 'composer install --no-interaction --prefer-dist --no-progress && php artisan test'
+    - composer install --no-interaction --prefer-dist --no-progress
+    - php artisan test
 
 build:
   stage: build
+  image: docker:29-cli
   script:
-    - docker build --pull -t "notification-service:${CI_COMMIT_SHORT_SHA}" .
+    # CI_REGISTRY_* are short-lived credentials GitLab creates for this job only
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+    - docker build --pull -t "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA" .
+    - docker push "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
+    - |
+      if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
+        docker tag "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA" "$CI_REGISTRY_IMAGE:latest"
+        docker push "$CI_REGISTRY_IMAGE:latest"
+      fi
+  after_script:
+    - docker logout "$CI_REGISTRY"
 
-deploy_test:
-  stage: deploy_test
-  needs:
-    - build
-  rules:
-    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
-  script:
-    - test -r /etc/notification-service/test.env
-    - docker compose --env-file /etc/notification-service/test.env -f docker-compose.yml -p notification-service up -d --no-build --remove-orphans
-    - docker compose --env-file /etc/notification-service/test.env -f docker-compose.yml -p notification-service exec -T app php artisan migrate --force
-    - >-
-      for attempt in $(seq 1 30); do
-        if curl --fail --silent --show-error http://127.0.0.1:8081/api/health; then
-          exit 0;
-        fi;
-        sleep 3;
-      done;
-      docker compose --env-file /etc/notification-service/test.env -f docker-compose.yml -p notification-service ps;
-      exit 1
+# deploy_test (Compose on w2) returns in Phase 3.
