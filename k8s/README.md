@@ -1,44 +1,7 @@
-# Kubernetes deployment (k3s, namespace `notification`)
+# Kubernetes manifests have moved
 
-Apply in file order. Two Secrets are created by hand and are not in Git:
+The manifests for the `notification` namespace now live in the GitLab project
+`root/notification-deploy`. ArgoCD applies whatever is on its `main` branch.
 
-```sh
-kubectl apply -f 00-namespace.yaml -f 10-config.yaml
-kubectl -n notification create secret docker-registry gitlab-registry \
-  --docker-server=172.31.34.196:5050 --docker-username=<deploy token user> --docker-password=<deploy token>
-kubectl -n notification create secret generic app-secrets \
-  --from-literal=APP_KEY=<base64 key> --from-literal=DB_PASSWORD=<password>
-kubectl apply -f 20-postgres.yaml
-kubectl apply -f 30-migrate-job.yaml && kubectl -n notification wait --for=condition=complete job/migrate
-kubectl apply -f 40-app.yaml
-kubectl apply -f 50-ci-rbac.yaml      # pipeline's namespace-only service account
-kubectl apply -f 60-hpa.yaml          # 2-3 app pods by CPU
-kubectl apply -f 70-backup-cronjob.yaml   # pg_dump every 6 hours, 8 kept
-kubectl apply -f 80-networkpolicies.yaml # default-deny ingress + 3 allow rules
-```
-
-Node requirement: the AppArmor profile in `node/fable-c1-container.apparmor` must be
-loaded on every node that runs these pods (today: w1):
-
-```sh
-sudo install -m 644 fable-c1-container.apparmor /etc/apparmor.d/fable-c1-container
-sudo apparmor_parser -r /etc/apparmor.d/fable-c1-container
-```
-
-Without it the pods stay in `CreateContainerError` (profile not found). It is a copy
-of containerd's default profile that also lets processes inside one container signal
-each other, which Postgres, PHP-FPM and nginx need.
-
-Access: `ssh -L 8080:172.31.11.8:80 <cp1>` then http://notification.localhost:8080
-
-The database is a single replica on node-local storage: no failover, and deleting the
-PVC deletes the data.
-
-Backups: list with `kubectl -n notification get cronjob,job`; run one now with
-`kubectl -n notification create job --from=cronjob/postgres-backup backup-now`.
-The dumps are in the PVC `postgres-backups` on the same node as the database.
-
-With the autoscaler in place, do not set `replicas` by hand: the HPA owns it.
-
-Network policies: any new pod that must reach Postgres needs the label `db-client: "true"`
-(or `app: notification`). Without it the connection times out.
+This repo's pipeline builds the images and, in the `release_k3s` job, commits the new
+image tag to that repo. To change how the app runs on k3s, edit the deploy repo.

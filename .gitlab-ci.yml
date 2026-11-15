@@ -93,9 +93,9 @@ deploy_test:
     - if [ "$CI_JOB_STATUS" != "success" ]; then docker compose ps -a; docker compose logs --tail 40; fi
     - docker logout "$CI_REGISTRY"
 
-# Kubernetes deployment (namespace "notification"). Runs after the Compose test deployment succeeded.
-# K3S_TOKEN belongs to the service account ci-deployer, which can only touch this namespace.
-deploy_k3s:
+# Kubernetes release, GitOps style: this job never talks to the cluster.
+# It commits the new image tag to the deploy repo; ArgoCD (running in k3s) sees the commit and applies it.
+release_k3s:
   stage: deploy_k3s
   image: alpine/k8s:1.36.6
   rules:
@@ -105,23 +105,14 @@ deploy_k3s:
     url: http://notification.localhost:8080
   resource_group: k3s
   variables:
-    K3S_SERVER: https://172.31.11.8:6443
-    KUBECONFIG: /tmp/kubeconfig
-    NS: notification
+    DEPLOY_REPO: 172.31.34.196:8929/root/notification-deploy.git
   script:
-    - echo "$K3S_CA_B64" | base64 -d > /tmp/ca.crt
-    - kubectl config set-cluster k3s --server="$K3S_SERVER" --certificate-authority=/tmp/ca.crt --embed-certs=true
-    - kubectl config set-credentials ci-deployer --token="$K3S_TOKEN"
-    - kubectl config set-context k3s --cluster=k3s --user=ci-deployer --namespace="$NS"
-    - kubectl config use-context k3s
-    # 1. migrations with the new image, as a fresh Job
-    - kubectl delete job migrate --ignore-not-found --wait=true
-    - sed "s#/app:[0-9a-f]*\$#/app:$CI_COMMIT_SHORT_SHA#" k8s/30-migrate-job.yaml | kubectl create -f -
-    - kubectl wait --for=condition=complete job/migrate --timeout=180s
-    - kubectl logs job/migrate --tail=5
-    # 2. rolling update; roll back by itself if the new pods do not become ready
-    - kubectl set image deployment/app app="$APP_IMAGE" web="$WEB_IMAGE"
-    - kubectl rollout status deployment/app --timeout=180s || (kubectl rollout undo deployment/app && exit 1)
-    # 3. check through the Ingress
-    - wget -q -O - --header "Host:notification.localhost" http://172.31.11.8/api/health
-    - kubectl get pods -o wide
+    # DEPLOY_REPO_TOKEN can only write to that one repository
+    - git clone -q --depth 1 "http://ci-push:${DEPLOY_REPO_TOKEN}@${DEPLOY_REPO}" deploy
+    - cd deploy
+    - sed -i "s/^\(    newTag: \).*/\1$CI_COMMIT_SHORT_SHA/" kustomization.yaml
+    - grep -n newTag kustomization.yaml
+    - git config user.name "GitLab CI" && git config user.email "ci@gitlab.lab"
+    - git commit -q -am "Release $CI_COMMIT_SHORT_SHA" -m "$CI_COMMIT_TITLE" -m "Pipeline $CI_PIPELINE_URL" || echo "tag already current, nothing to commit"
+    - git push -q origin HEAD:main
+    - git log --oneline -1
