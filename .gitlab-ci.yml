@@ -110,7 +110,8 @@ release_k3s:
     # DEPLOY_REPO_TOKEN can only write to that one repository
     - git clone -q --depth 1 "http://ci-push:${DEPLOY_REPO_TOKEN}@${DEPLOY_REPO}" deploy
     - cd deploy
-    - sed -i "s/^\(    newTag: \).*/\1$CI_COMMIT_SHORT_SHA/" kustomization.yaml
+    - |
+      sed -i "s/^\(    newTag: \).*/\1$CI_COMMIT_SHORT_SHA/" kustomization.yaml
     - grep -n newTag kustomization.yaml
     - git config user.name "GitLab CI" && git config user.email "ci@gitlab.lab"
     - git commit -q -am "Release $CI_COMMIT_SHORT_SHA" -m "$CI_COMMIT_TITLE" -m "Pipeline $CI_PIPELINE_URL" || echo "tag already current, nothing to commit"
