@@ -1,24 +1,17 @@
-# Runs on the project runner on w2 (Docker executor): every job is a throwaway container.
-stages:
-  - validate
-  - test
-  - build
-  - deploy
-  - deploy_k3s
+# Pipeline: validate -> test -> build -> deploy (Compose on the Docker host) -> release (k3s via ArgoCD)
+# Runs on the project runner (Docker executor): every job is a fresh container.
+
+stages: [validate, test, build, deploy, release]
 
 variables:
-  GIT_DEPTH: "20"
-  # One tag per commit: the same tag is built, pushed, deployed and rolled back to
+  # The same tag is built, pushed, deployed and rolled back to
   APP_IMAGE: $CI_REGISTRY_IMAGE/app:$CI_COMMIT_SHORT_SHA
   WEB_IMAGE: $CI_REGISTRY_IMAGE/web:$CI_COMMIT_SHORT_SHA
+  TEST_HOST: 172.31.34.196            # private IP of the Docker host
+  DEPLOY_REPO: root/notification-deploy
 
 default:
-  tags:
-    - docker
-
-# CI_REGISTRY_* are short-lived credentials GitLab creates for each job
-.registry_login: &registry_login
-  - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+  tags: [docker]
 
 validate:
   stage: validate
@@ -31,19 +24,14 @@ test:
   image: composer:2
   variables:
     APP_ENV: testing
-    # throwaway key for tests only, never used by a deployment
-    APP_KEY: "base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+    APP_KEY: "base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="   # dummy key, tests only
     DB_CONNECTION: sqlite
     DB_DATABASE: ":memory:"
   cache:
-    key:
-      files:
-        - composer.lock
-    paths:
-      - vendor/
+    key: { files: [composer.lock] }
+    paths: [vendor/]
   script:
-    - composer install --no-interaction --prefer-dist --no-progress
-    # Laravel expects a .env file; job variables above still win over its values
+    - composer install --no-interaction --no-progress
     - cp .env.example .env
     - php artisan test
 
@@ -51,69 +39,47 @@ build:
   stage: build
   image: docker:29-cli
   script:
-    - *registry_login
+    # CI_REGISTRY_USER/PASSWORD are created by GitLab for this job only
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
     - docker build --pull --target app -t "$APP_IMAGE" .
     - docker build --target web -t "$WEB_IMAGE" .
     - docker push "$APP_IMAGE"
     - docker push "$WEB_IMAGE"
-    - |
-      if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
-        for name in app web; do
-          docker tag "$CI_REGISTRY_IMAGE/$name:$CI_COMMIT_SHORT_SHA" "$CI_REGISTRY_IMAGE/$name:latest"
-          docker push "$CI_REGISTRY_IMAGE/$name:latest"
-        done
-      fi
-  after_script:
-    - docker logout "$CI_REGISTRY"
 
-# Compose deployment on w2. Rollback: GitLab > Operate > Environments > test > re-deploy an older entry.
 deploy_test:
   stage: deploy
   image: docker:29-cli
   rules:
-    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
   environment:
     name: test
-    url: http://172.31.34.196:8081
-  resource_group: test        # never two deployments at the same time
+    url: http://$TEST_HOST:8081
+  resource_group: test                # one deployment at a time
   variables:
     COMPOSE_PROJECT_NAME: notification-service
-    BIND_ADDR: 172.31.34.196  # private IP only
+    BIND_ADDR: $TEST_HOST
   script:
-    # TEST_* are masked, protected variables scoped to the "test" environment
+    # TEST_APP_KEY / TEST_DB_PASSWORD: masked CI/CD variables, scope "test"
     - export APP_KEY="$TEST_APP_KEY" DB_PASSWORD="$TEST_DB_PASSWORD"
-    - *registry_login
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
     - docker compose pull app nginx
-    - docker compose up -d --no-build --remove-orphans --wait --wait-timeout 180
+    - docker compose up -d --no-build --wait --wait-timeout 180
     - docker compose exec -T app php artisan migrate --force
-    - wget -q -O - "http://$BIND_ADDR:8081/api/health"
-    - docker compose ps
-  after_script:
-    - export APP_KEY=unused DB_PASSWORD=unused
-    - if [ "$CI_JOB_STATUS" != "success" ]; then docker compose ps -a; docker compose logs --tail 40; fi
-    - docker logout "$CI_REGISTRY"
+    - wget -q -O - "http://$TEST_HOST:8081/api/health"
 
-# Kubernetes release, GitOps style: this job never talks to the cluster.
-# It commits the new image tag to the deploy repo; ArgoCD (running in k3s) sees the commit and applies it.
 release_k3s:
-  stage: deploy_k3s
-  image: alpine/k8s:1.36.6
+  stage: release
+  image: alpine/k8s:1.36.6           # has git and kustomize
   rules:
-    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
   environment:
     name: k3s
-    url: http://notification.localhost:8080
   resource_group: k3s
-  variables:
-    DEPLOY_REPO: 172.31.34.196:8929/root/notification-deploy.git
   script:
-    # DEPLOY_REPO_TOKEN can only write to that one repository
-    - git clone -q --depth 1 "http://ci-push:${DEPLOY_REPO_TOKEN}@${DEPLOY_REPO}" deploy
+    # This job never touches the cluster: it commits the new tag, ArgoCD applies it.
+    # DEPLOY_REPO_TOKEN may only write to the deploy repo.
+    - git clone -q "$CI_SERVER_PROTOCOL://ci-push:$DEPLOY_REPO_TOKEN@$CI_SERVER_HOST:$CI_SERVER_PORT/$DEPLOY_REPO.git" deploy
     - cd deploy
-    - |
-      sed -i "s/^\(    newTag: \).*/\1$CI_COMMIT_SHORT_SHA/" kustomization.yaml
-    - grep -n newTag kustomization.yaml
-    - git config user.name "GitLab CI" && git config user.email "ci@gitlab.lab"
-    - git commit -q -am "Release $CI_COMMIT_SHORT_SHA" -m "$CI_COMMIT_TITLE" -m "Pipeline $CI_PIPELINE_URL" || echo "tag already current, nothing to commit"
-    - git push -q origin HEAD:main
-    - git log --oneline -1
+    - kustomize edit set image "$APP_IMAGE" "$WEB_IMAGE"
+    - git -c user.name="GitLab CI" -c user.email="ci@gitlab.lab" commit -am "Release $CI_COMMIT_SHORT_SHA" -m "$CI_COMMIT_TITLE" || echo "already on this tag"
+    - git push origin HEAD:main
