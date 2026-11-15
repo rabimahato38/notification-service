@@ -8,6 +8,9 @@ spec:
   backoffLimit: 6            # retries cover the time Postgres needs to start
   ttlSecondsAfterFinished: 86400
   template:
+    metadata:
+      labels:
+        db-client: "true"      # lets the NetworkPolicy admit this pod to Postgres
     spec:
       restartPolicy: OnFailure
       imagePullSecrets:

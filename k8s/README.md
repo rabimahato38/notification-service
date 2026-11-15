@@ -14,6 +14,7 @@ kubectl apply -f 40-app.yaml
 kubectl apply -f 50-ci-rbac.yaml      # pipeline's namespace-only service account
 kubectl apply -f 60-hpa.yaml          # 2-3 app pods by CPU
 kubectl apply -f 70-backup-cronjob.yaml   # pg_dump every 6 hours, 8 kept
+kubectl apply -f 80-networkpolicies.yaml # default-deny ingress + 3 allow rules
 ```
 
 Node requirement: the AppArmor profile in `node/fable-c1-container.apparmor` must be
@@ -38,3 +39,6 @@ Backups: list with `kubectl -n notification get cronjob,job`; run one now with
 The dumps are in the PVC `postgres-backups` on the same node as the database.
 
 With the autoscaler in place, do not set `replicas` by hand: the HPA owns it.
+
+Network policies: any new pod that must reach Postgres needs the label `db-client: "true"`
+(or `app: notification`). Without it the connection times out.
