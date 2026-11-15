@@ -35,6 +35,9 @@ spec:
           resources:
             requests: { cpu: 100m, memory: 128Mi }
             limits: { cpu: 500m, memory: 256Mi }
+          lifecycle:
+            preStop:
+              sleep: { seconds: 15 }    # PHP-FPM outlives nginx during shutdown
           readinessProbe:
             tcpSocket: { port: 9000 }
             periodSeconds: 5
@@ -52,6 +55,9 @@ spec:
           resources:
             requests: { cpu: 20m, memory: 32Mi }
             limits: { cpu: 100m, memory: 64Mi }
+          lifecycle:
+            preStop:
+              sleep: { seconds: 10 }    # keep serving until Traefik has dropped this pod from its list
           readinessProbe:
             httpGet: { path: /api/health, port: 80 }   # goes through PHP-FPM and Laravel
             periodSeconds: 5
