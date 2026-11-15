@@ -11,6 +11,9 @@ kubectl -n notification create secret generic app-secrets \
 kubectl apply -f 20-postgres.yaml
 kubectl apply -f 30-migrate-job.yaml && kubectl -n notification wait --for=condition=complete job/migrate
 kubectl apply -f 40-app.yaml
+kubectl apply -f 50-ci-rbac.yaml      # pipeline's namespace-only service account
+kubectl apply -f 60-hpa.yaml          # 2-3 app pods by CPU
+kubectl apply -f 70-backup-cronjob.yaml   # pg_dump every 6 hours, 8 kept
 ```
 
 Node requirement: the AppArmor profile in `node/fable-c1-container.apparmor` must be
@@ -29,3 +32,9 @@ Access: `ssh -L 8080:172.31.11.8:80 <cp1>` then http://notification.localhost:80
 
 The database is a single replica on node-local storage: no failover, and deleting the
 PVC deletes the data.
+
+Backups: list with `kubectl -n notification get cronjob,job`; run one now with
+`kubectl -n notification create job --from=cronjob/postgres-backup backup-now`.
+The dumps are in the PVC `postgres-backups` on the same node as the database.
+
+With the autoscaler in place, do not set `replicas` by hand: the HPA owns it.
