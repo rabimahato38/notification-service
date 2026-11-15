@@ -1,0 +1,78 @@
+# Project database. One replica on node-local storage: this is NOT high availability.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: notification
+spec:
+  clusterIP: None            # headless: gives the StatefulSet pod a stable DNS name
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: notification
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: w1   # local-path data stays on this node
+      # Run as the postgres user (uid 999), not root.
+      # AppArmor: the default container profile on these nodes blocks signals between processes of one
+      # container. "fable-c1-container" is the same profile with that fixed; it must be loaded on the node.
+      securityContext:
+        appArmorProfile:
+          type: Localhost
+          localhostProfile: fable-c1-container
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+      containers:
+        - name: postgres
+          image: postgres:16
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              valueFrom: { configMapKeyRef: { name: app-config, key: DB_DATABASE } }
+            - name: POSTGRES_USER
+              valueFrom: { configMapKeyRef: { name: app-config, key: DB_USERNAME } }
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: app-secrets, key: DB_PASSWORD } }
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+          readinessProbe:
+            exec: { command: ["sh", "-c", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"] }
+            periodSeconds: 5
+          livenessProbe:
+            exec: { command: ["sh", "-c", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"] }
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: local-path
+        resources:
+          requests:
+            storage: 2Gi

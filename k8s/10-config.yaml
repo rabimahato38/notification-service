@@ -1,0 +1,16 @@
+# Non-secret settings. Secrets (APP_KEY, DB_PASSWORD) live in the Secret "app-secrets", created outside Git.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: notification
+data:
+  APP_ENV: production
+  APP_DEBUG: "false"
+  APP_URL: http://notification.localhost:8080
+  LOG_CHANNEL: stderr
+  DB_CONNECTION: pgsql
+  DB_HOST: postgres
+  DB_PORT: "5432"
+  DB_DATABASE: laravel_db
+  DB_USERNAME: laravel_user

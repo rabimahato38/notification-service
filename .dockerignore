@@ -24,3 +24,5 @@ Thumbs.db
 .gitlab-ci.yml
 docker-compose*.yml
 postman
+
+k8s
