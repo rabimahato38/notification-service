@@ -4,6 +4,7 @@ stages:
   - test
   - build
   - deploy
+  - deploy_k3s
 
 variables:
   GIT_DEPTH: "20"
@@ -91,3 +92,36 @@ deploy_test:
     - export APP_KEY=unused DB_PASSWORD=unused
     - if [ "$CI_JOB_STATUS" != "success" ]; then docker compose ps -a; docker compose logs --tail 40; fi
     - docker logout "$CI_REGISTRY"
+
+# Kubernetes deployment (namespace "notification"). Runs after the Compose test deployment succeeded.
+# K3S_TOKEN belongs to the service account ci-deployer, which can only touch this namespace.
+deploy_k3s:
+  stage: deploy_k3s
+  image: alpine/k8s:1.36.6
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+  environment:
+    name: k3s
+    url: http://notification.localhost:8080
+  resource_group: k3s
+  variables:
+    K3S_SERVER: https://172.31.11.8:6443
+    KUBECONFIG: /tmp/kubeconfig
+    NS: notification
+  script:
+    - echo "$K3S_CA_B64" | base64 -d > /tmp/ca.crt
+    - kubectl config set-cluster k3s --server="$K3S_SERVER" --certificate-authority=/tmp/ca.crt --embed-certs=true
+    - kubectl config set-credentials ci-deployer --token="$K3S_TOKEN"
+    - kubectl config set-context k3s --cluster=k3s --user=ci-deployer --namespace="$NS"
+    - kubectl config use-context k3s
+    # 1. migrations with the new image, as a fresh Job
+    - kubectl delete job migrate --ignore-not-found --wait=true
+    - sed "s#/app:[0-9a-f]*\$#/app:$CI_COMMIT_SHORT_SHA#" k8s/30-migrate-job.yaml | kubectl create -f -
+    - kubectl wait --for=condition=complete job/migrate --timeout=180s
+    - kubectl logs job/migrate --tail=5
+    # 2. rolling update; roll back by itself if the new pods do not become ready
+    - kubectl set image deployment/app app="$APP_IMAGE" web="$WEB_IMAGE"
+    - kubectl rollout status deployment/app --timeout=180s || (kubectl rollout undo deployment/app && exit 1)
+    # 3. check through the Ingress
+    - wget -q -O - --header "Host:notification.localhost" http://172.31.11.8/api/health
+    - kubectl get pods -o wide
