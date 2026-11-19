@@ -1,10 +1,15 @@
 # Two images from one file:
 #   --target app  PHP-FPM with the Laravel code
 #   --target web  nginx with the site config and the public/ files
+#
+# The app image is built in two stages. "build" has compilers, -dev headers and
+# Composer; "app" gets only the compiled PHP extensions, their runtime libraries
+# and the finished code. Build tools never reach production.
 
-FROM php:8.3-fpm AS app
+# ---------- build: compile PHP extensions and install Composer dependencies ----------
+FROM php:8.3-fpm AS build
 
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     unzip \
     libpq-dev \
     libzip-dev \
@@ -21,7 +26,6 @@ RUN apt-get update && apt-get install -y \
         gd \
         zip \
         opcache \
-    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
@@ -39,8 +43,36 @@ RUN composer install \
 
 COPY . .
 
-RUN composer dump-autoload --no-dev --optimize \
-    && chown -R www-data:www-data storage bootstrap/cache
+RUN composer dump-autoload --no-dev --optimize
+
+
+# ---------- app: runtime only ----------
+FROM php:8.3-fpm AS app
+
+# Runtime libraries for the extensions (the -dev packages above minus headers),
+# then remove the compilers the base image ships with ($PHPIZE_DEPS: gcc, make,
+# libc-dev, ...). "libc-dev" is a virtual name, so libc6-dev and the kernel
+# headers it pulls in are named explicitly. Installing the libraries first marks
+# them as wanted, so --auto-remove leaves them in place.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 \
+    libzip5 \
+    libpng16-16t64 \
+    libjpeg62-turbo \
+    libfreetype6 \
+    && apt-get purge -y --auto-remove $PHPIZE_DEPS libc6-dev linux-libc-dev libcrypt-dev rpcsvc-proto \
+    && rm -rf /var/lib/apt/lists/*
+
+# Compiled extensions and the ini files that enable them
+COPY --from=build /usr/local/lib/php/extensions/ /usr/local/lib/php/extensions/
+COPY --from=build /usr/local/etc/php/conf.d/ /usr/local/etc/php/conf.d/
+
+WORKDIR /var/www/html
+
+COPY --from=build /var/www/html /var/www/html
+
+# Only the folders Laravel writes to belong to the PHP-FPM worker user
+RUN chown -R www-data:www-data storage bootstrap/cache
 
 
 FROM nginx:stable-alpine AS web
