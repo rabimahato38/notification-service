@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Str;
 
 class Service extends Model
@@ -33,6 +34,34 @@ class Service extends Model
         'is_active' => 'boolean',
         'allowed_templates' => 'array',
     ];
+
+    /**
+     * Messages sent under this service (matched on the public service_id).
+     */
+    public function logs(): HasMany
+    {
+        return $this->hasMany(WhatsAppLog::class, 'service_id', 'service_id');
+    }
+
+    /**
+     * Turn "a, b ,c" into ['a', 'b', 'c']; empty input means "all templates" (null).
+     *
+     * @return array<int, string>|null
+     */
+    public static function parseTemplateList(?string $input): ?array
+    {
+        $templates = array_values(array_unique(array_filter(array_map('trim', explode(',', (string) $input)))));
+
+        return $templates === [] ? null : $templates;
+    }
+
+    /**
+     * API key with the middle hidden, for display.
+     */
+    public function maskedApiKey(): string
+    {
+        return substr($this->api_key, 0, 13).str_repeat('•', 8).substr($this->api_key, -4);
+    }
 
     /**
      * Check if a template is allowed/assigned under this service.
